@@ -1,0 +1,199 @@
+@page "/devices"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.WebUtilities
+@inject ConfigRepository Repo
+
+<h1>设备管理</h1>
+<p class="page-sub">设备从属于通道（对应一台物理设备/一个从站）。从站号留空则用通道默认值。</p>
+
+<div class="toolbar">
+    <select class="input select-inline" value="@_selectedChannelId" @onchange="e => OnChannelChanged(e.Value)">
+        <option value="">— 选择通道 —</option>
+        @foreach (var c in _channels)
+        {
+            <option value="@c.Id">@c.Name（@DriverName(c.DriverId)）</option>
+        }
+    </select>
+    <button class="btn btn-primary" disabled="@(_selectedChannelId is null)" @onclick="OpenCreate">＋ 新建设备</button>
+</div>
+
+<table class="table">
+    <thead><tr><th>#</th><th>设备名</th><th>从站号</th><th>模板</th><th>启用</th><th>点位数</th><th style="width:260px">操作</th></tr></thead>
+    <tbody>
+        @foreach (var d in _devices)
+        {
+            <tr>
+                <td>@d.Id</td>
+                <td>@d.Name</td>
+                <td>@(d.StationNo?.ToString() ?? "默认")</td>
+                <td>@(TemplateLabel(d.TemplateId))</td>
+                <td>@(d.Enabled ? "是" : "否")</td>
+                <td>@_tagCounts.GetValueOrDefault(d.Id, 0)</td>
+                <td>
+                    <a class="btn btn-sm" href="@($"tags?deviceId={d.Id}")">点位</a>
+                    <button class="btn btn-sm" @onclick="() => OpenEdit(d)">编辑</button>
+                    <button class="btn btn-sm" @onclick="() => ApplyTemplateDialog(d)">套用模板</button>
+                    <button class="btn btn-sm btn-danger" @onclick="() => DeleteAsync(d)">删除</button>
+                </td>
+            </tr>
+        }
+        @if (_selectedChannelId is null)
+        {
+            <tr><td colspan="7" class="empty">先选择通道</td></tr>
+        }
+        else if (_devices.Count == 0)
+        {
+            <tr><td colspan="7" class="empty">该通道下还没有设备</td></tr>
+        }
+    </tbody>
+</table>
+
+@if (_showDialog)
+{
+    <div class="modal-mask" @onclick="() => _showDialog = false">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>@(_editingId is null ? "新建设备" : $"编辑设备 #{_editingId}")</h3>
+            <div class="form-row">
+                <label class="form-label">设备名 *</label>
+                <input class="input" @bind="_model.Name" placeholder="如：CNC-01 / 1号电表" />
+            </div>
+            <div class="form-row">
+                <label class="form-label">从站号/节点地址</label>
+                <input type="number" class="input" @bind="_stationNo" />
+                <div class="hint">Modbus unit id / FINS 节点号；留空使用通道默认</div>
+            </div>
+            <label class="checkbox">
+                <input type="checkbox" @bind="_model.Enabled" /> 启用
+            </label>
+            <div class="modal-actions">
+                <button class="btn" @onclick="() => _showDialog = false">取消</button>
+                <button class="btn btn-primary" @onclick="SaveAsync">保存</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showTemplateDialog)
+{
+    <div class="modal-mask" @onclick="() => _showTemplateDialog = false">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>套用模板到 @(_templateTarget?.Name)</h3>
+            <p class="page-sub">模板会批量创建该型号的全部点位（同名跳过）。</p>
+            <select class="input" value="@_templateId" @onchange="e => _templateId = e.Value?.ToString()">
+                <option value="">— 选择模板 —</option>
+                @foreach (var t in _templates)
+                {
+                    <option value="@t.Id">@t.Vendor / @t.Model</option>
+                }
+            </select>
+            <div class="modal-actions">
+                <button class="btn" @onclick="() => _showTemplateDialog = false">取消</button>
+                <button class="btn btn-primary" disabled="@string.IsNullOrEmpty(_templateId)" @onclick="ApplyTemplateAsync">应用</button>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_applyResult))
+    {
+        <div class="alert alert-ok">@_applyResult</div>
+    }
+}
+
+@code {
+    [Inject] private IEnumerable<IDriverFactory> DriverFactories { get; set; } = [];
+
+    private List<ChannelEntity> _channels = [];
+    private List<DeviceEntity> _devices = [];
+    private List<TemplateEntity> _templates = [];
+    private Dictionary<long, int> _tagCounts = [];
+    private long? _selectedChannelId;
+    private bool _showDialog, _showTemplateDialog;
+    private long? _editingId;
+    private DeviceEntity _model = new() { Name = "", Enabled = true };
+    private int? _stationNo;
+    private DeviceEntity? _templateTarget;
+    private string _templateId = "";
+    private string? _applyResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _channels = await Repo.GetChannelsAsync();
+        _templates = await Repo.GetTemplatesAsync();
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        if (QueryHelpers.ParseQuery(uri.Query).TryGetValue("channelId", out var cid) && long.TryParse(cid, out var parsed))
+            await SelectChannelAsync(parsed);
+    }
+
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    private string DriverName(string id) =>
+        DriverFactories.FirstOrDefault(f => f.DriverId == id)?.Descriptor.DisplayName ?? id;
+
+    private string TemplateLabel(long? id) =>
+        id is null ? "-" : _templates.FirstOrDefault(t => t.Id == id) is { } t ? $"{t.Vendor}/{t.Model}" : "?";
+
+    private void OnChannelChanged(object? value)
+    {
+        if (long.TryParse(value?.ToString(), out var id)) _ = SelectChannelAsync(id);
+        else { _selectedChannelId = null; _devices = []; }
+    }
+
+    private async Task SelectChannelAsync(long channelId)
+    {
+        _selectedChannelId = channelId;
+        _devices = await Repo.GetDevicesAsync(channelId);
+        var tags = await Repo.GetTagsAsync();
+        _tagCounts = tags.GroupBy(t => t.DeviceId).ToDictionary(g => g.Key, g => g.Count());
+        StateHasChanged();
+    }
+
+    private void OpenCreate()
+    {
+        _editingId = null;
+        _model = new DeviceEntity { Name = "", ChannelId = _selectedChannelId ?? 0, Enabled = true };
+        _stationNo = null;
+        _showDialog = true;
+    }
+
+    private void OpenEdit(DeviceEntity d)
+    {
+        _editingId = d.Id;
+        _model = new DeviceEntity { Id = d.Id, ChannelId = d.ChannelId, Name = d.Name, StationNo = d.StationNo, TemplateId = d.TemplateId, Enabled = d.Enabled, Description = d.Description };
+        _stationNo = d.StationNo;
+        _showDialog = true;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_model.Name) || _selectedChannelId is not long channelId) return;
+        _model.ChannelId = channelId;
+        _model.StationNo = _stationNo;
+        if (_editingId is long id) await Repo.UpdateDeviceAsync(id, _model);
+        else await Repo.CreateDeviceAsync(_model);
+        _showDialog = false;
+        await SelectChannelAsync(channelId);
+    }
+
+    private async Task DeleteAsync(DeviceEntity d)
+    {
+        await Repo.DeleteDeviceAsync(d.Id);
+        if (_selectedChannelId is long channelId) await SelectChannelAsync(channelId);
+    }
+
+    private void ApplyTemplateDialog(DeviceEntity d)
+    {
+        _templateTarget = d;
+        _templateId = "";
+        _applyResult = null;
+        _showTemplateDialog = true;
+    }
+
+    private async Task ApplyTemplateAsync()
+    {
+        if (_templateTarget is null || !long.TryParse(_templateId, out var templateId)) return;
+        var count = await Repo.ApplyTemplateAsync(templateId, _templateTarget.Id);
+        _applyResult = $"已应用模板，创建点位 {count} 个（同名跳过）。";
+        _showTemplateDialog = false;
+        if (_selectedChannelId is long channelId) await SelectChannelAsync(channelId);
+    }
+}

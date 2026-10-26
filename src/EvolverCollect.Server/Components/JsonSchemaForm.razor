@@ -1,0 +1,161 @@
+@* JSON Schema 动态表单：按驱动的 ParameterSchemaJson 自动渲染连接参数编辑。
+   值分四个类型字典存储（string / int / double / bool），保存时由 Parent 通过 ResultJson 读取。 *@
+@using System.Text.Json
+@using System.Text.Json.Nodes
+
+<div class="schema-form">
+    @foreach (var field in _fields)
+    {
+        <div class="form-row">
+            <label class="form-label">@field.Title</label>
+            <div class="form-control">
+                @if (field.EnumValues is { } enumValues)
+                {
+                    <select class="input" @bind="_strings[field.Name]">
+                        @foreach (var option in enumValues)
+                        {
+                            <option value="@option">@option</option>
+                        }
+                    </select>
+                }
+                else if (field.Type == "boolean")
+                {
+                    <label class="checkbox">
+                        <input type="checkbox" @bind="_bools[field.Name]" />
+                    </label>
+                }
+                else if (field.Type == "integer")
+                {
+                    <input type="number" class="input" step="1" @bind="_ints[field.Name]" />
+                }
+                else if (field.Type == "number")
+                {
+                    <input type="number" class="input" step="any" @bind="_numbers[field.Name]" />
+                }
+                else
+                {
+                    <input type="@(field.IsPassword ? "password" : "text")" class="input" @bind="_strings[field.Name]" />
+                }
+                @if (!string.IsNullOrWhiteSpace(field.Description))
+                {
+                    <div class="hint">@field.Description</div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private sealed record SchemaField(
+        string Name, string Title, string Type, string? Description, bool IsPassword, string[]? EnumValues);
+
+    [Parameter, EditorRequired]
+    public string SchemaJson { get; set; } = "{}";
+
+    /// <summary>已保存的连接参数 JSON（编辑时传入，缺省值兜底）。</summary>
+    [Parameter]
+    public string? ExistingJson { get; set; }
+
+    /// <summary>当前表单值的 JSON 序列化结果（父组件在保存时读取）。</summary>
+    public string ResultJson => BuildResult();
+
+    private List<SchemaField> _fields = [];
+    private readonly Dictionary<string, string> _strings = [];
+    private readonly Dictionary<string, int?> _ints = [];
+    private readonly Dictionary<string, double?> _numbers = [];
+    private readonly Dictionary<string, bool> _bools = [];
+    private string _loadedSchema = "";
+
+    protected override void OnParametersSet()
+    {
+        if (SchemaJson == _loadedSchema) return;
+        _loadedSchema = SchemaJson;
+        ParseSchema();
+        LoadExisting();
+    }
+
+    private void ParseSchema()
+    {
+        _fields = [];
+        try
+        {
+            var schema = JsonNode.Parse(string.IsNullOrWhiteSpace(SchemaJson) ? "{}" : SchemaJson)?.AsObject();
+            var props = schema?["properties"]?.AsObject();
+            if (props is null) return;
+            foreach (var (name, node) in props)
+            {
+                if (node is null) continue;
+                var type = node["type"]?.GetValue<string>() ?? "string";
+                var title = node["title"]?.GetValue<string>() ?? name;
+                var description = node["description"]?.GetValue<string>();
+                var format = node["format"]?.GetValue<string>();
+                string[]? enumValues = null;
+                if (node["enum"] is JsonArray arr)
+                    enumValues = [.. arr.Select(v => v?.GetValue<string>() ?? v?.ToString())];
+                _fields.Add(new SchemaField(name, title, type, description, format == "password", enumValues));
+            }
+        }
+        catch (JsonException)
+        {
+            _fields = [];
+        }
+    }
+
+    private void LoadExisting()
+    {
+        var existing = TryParseObject(ExistingJson ?? "{}");
+        foreach (var f in _fields)
+        {
+            JsonNode? value = existing?[f.Name];
+            value ??= TryParseObject(SchemaJson)?["properties"]?[f.Name]?["default"];
+
+            switch (f.Type)
+            {
+                case "boolean" when f.EnumValues is null:
+                    _bools[f.Name] = value is not null && value.GetValue<bool>();
+                    break;
+                case "integer":
+                    _ints[f.Name] = value is not null && int.TryParse(value.ToString(), out var i) ? i : null;
+                    break;
+                case "number":
+                    _numbers[f.Name] = value is not null && double.TryParse(value.ToString(), out var d) ? d : null;
+                    break;
+                default:
+                    var text = value?.ToString();
+                    if (f.EnumValues is not null)
+                        _strings[f.Name] = f.EnumValues.Contains(text) ? text! : f.EnumValues[0];
+                    else
+                        _strings[f.Name] = text ?? "";
+                    break;
+            }
+        }
+    }
+
+    private static JsonObject? TryParseObject(string json)
+    {
+        try
+        {
+            return JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json)?.AsObject();
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private string BuildResult()
+    {
+        var result = new JsonObject();
+        foreach (var f in _fields)
+        {
+            JsonNode? node = f.Type switch
+            {
+                "boolean" when f.EnumValues is null => _bools.GetValueOrDefault(f.Name, false),
+                "integer" when _ints.TryGetValue(f.Name, out var i) && i is not null => i,
+                "number" when _numbers.TryGetValue(f.Name, out var n) && n is not null => n,
+                _ when f.EnumValues is not null => JsonValue.Create(_strings.GetValueOrDefault(f.Name, "")),
+                _ => string.IsNullOrEmpty(_strings.GetValueOrDefault(f.Name)) ? null
+                    : JsonValue.Create(_strings[f.Name]),
+            };
+            if (node is not null) result[f.Name] = node;
+        }
+        return result.ToJsonString(JsonSerializerOptions.Web);
+    }
+}

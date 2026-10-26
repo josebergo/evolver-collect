@@ -1,0 +1,234 @@
+@page "/channels"
+@rendermode InteractiveServer
+@inject ConfigRepository Repo
+@inject ChannelManager ChannelsManager
+@inject ConnectivityTester Tester
+@implements IDisposable
+
+<h1>采集通道</h1>
+<p class="page-sub">一个通道 = 一个物理连接。选驱动 → 填参数（表单由驱动的参数定义自动生成）→ 测试连通 → 保存并启动。</p>
+
+<div class="toolbar">
+    <button class="btn btn-primary" @onclick="() => OpenCreate()">＋ 新建通道</button>
+</div>
+
+<table class="table">
+    <thead>
+        <tr><th>#</th><th>名称</th><th>驱动</th><th>状态</th><th>采集周期</th><th>启用</th><th style="width:280px">操作</th></tr>
+    </thead>
+    <tbody>
+        @foreach (var c in _channels)
+        {
+            var status = ChannelsManager.GetStatus(c.Id);
+            <tr>
+                <td>@c.Id</td>
+                <td>@c.Name</td>
+                <td>@DriverName(c.DriverId)</td>
+                <td>
+                    <span class="badge @(status is null || status.State == ChannelState.Stopped ? "badge-muted"
+                        : status.Connected ? "badge-ok" : "badge-bad")">
+                        @(status is null ? "未启动" : status.Connected ? "运行中" : status.State == ChannelState.Degraded ? "重连中" : "已停止")
+                    </span>
+                    @if (status?.LastError is string err)
+                    {
+                        <div class="cell-error small" title="@err">@err</div>
+                    }
+                </td>
+                <td>@c.DefaultPollIntervalMs ms</td>
+                <td>@(c.Enabled ? "是" : "否")</td>
+                <td>
+                    <button class="btn btn-sm" @onclick="() => ToggleRunAsync(c.Id)">@(ChannelsManager.IsRunning(c.Id) ? "停止" : "启动")</button>
+                    <button class="btn btn-sm" @onclick="() => OpenEdit(c)">编辑</button>
+                    <button class="btn btn-sm" @onclick="() => TestExistingAsync(c)">测试</button>
+                    <button class="btn btn-sm btn-danger" @onclick="() => DeleteAsync(c)">删除</button>
+                </td>
+            </tr>
+        }
+        @if (_channels.Count == 0)
+        {
+            <tr><td colspan="7" class="empty">还没有通道，点右上角「新建通道」。</td></tr>
+        }
+    </tbody>
+</table>
+
+@if (_showDialog)
+{
+    <div class="modal-mask" @onclick="() => CloseDialog()">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>@(_editingId is null ? "新建通道" : $"编辑通道 #{_editingId}")</h3>
+
+            <div class="form-row">
+                <label class="form-label">通道名称 *</label>
+                <input class="input" @bind="_model.Name" placeholder="如：1号车间电表" />
+            </div>
+            <div class="form-row">
+                <label class="form-label">驱动类型</label>
+                <select class="input" value="@_model.DriverId" @onchange="e => OnDriverChanged(e.Value?.ToString())" disabled="@(_editingId is not null)">
+                    @foreach (var d in _drivers)
+                    {
+                        <option value="@d.Id">@d.DisplayName</option>
+                    }
+                </select>
+                @if (_selectedDescriptor?.AddressHelp is { } help)
+                {
+                    <div class="hint">@help</div>
+                }
+            </div>
+
+            @if (_selectedDescriptor is not null)
+            {
+                <h4 class="section-title">连接参数</h4>
+                <JsonSchemaForm @ref="_schemaForm"
+                                SchemaJson="@_selectedDescriptor.ParameterSchemaJson"
+                                ExistingJson="@_model.ConnectionJson" />
+            }
+
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label">默认采集周期 (ms)</label>
+                    <input type="number" class="input" @bind="_model.DefaultPollIntervalMs" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">超时 (ms)</label>
+                    <input type="number" class="input" @bind="_model.TimeoutMs" />
+                </div>
+            </div>
+
+            @if (_testResult is { } tr)
+            {
+                <div class="alert @(tr.Success ? "alert-ok" : "alert-error")">
+                    @(tr.Success ? $"连接成功（{tr.ElapsedMs:0} ms）" : $"连接失败：{tr.Error}")
+                </div>
+            }
+
+            <div class="modal-actions">
+                <button class="btn" @onclick="() => CloseDialog()">取消</button>
+                <button class="btn" @onclick="TestModelAsync">测试连接</button>
+                <button class="btn btn-primary" @onclick="SaveAsync">保存</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ChannelEntity> _channels = [];
+    private List<DriverDescriptor> _drivers = [];
+    private DriverDescriptor? _selectedDescriptor;
+    private JsonSchemaForm? _schemaForm;
+    private bool _showDialog;
+    private long? _editingId;
+    private ChannelEntity _model = NewChannel();
+    private (bool Success, string? Error, double ElapsedMs)? _testResult;
+    private Timer? _timer;
+
+    private static ChannelEntity NewChannel() => new()
+    {
+        Name = "", DriverId = "", Enabled = true, DefaultPollIntervalMs = 1000, TimeoutMs = 3000, RetryCount = 2,
+    };
+
+    [Inject]
+    private IEnumerable<IDriverFactory> DriverFactories { get; set; } = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 驱动元数据来自 DI 注册的全部工厂（表单据此动态渲染）
+        _drivers = [.. DriverFactories.Select(f => f.Descriptor).OrderBy(d => d.DisplayName)];
+        if (_model.DriverId == "" && _drivers.Count > 0) _model.DriverId = _drivers[0].Id;
+        _selectedDescriptor = _drivers.FirstOrDefault(d => d.Id == _model.DriverId);
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _channels = await Repo.GetChannelsAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) _timer = new Timer(async _ => await InvokeAsync(StateHasChanged), null, 1500, 1500);
+    }
+
+    private string DriverName(string id) => _drivers.FirstOrDefault(d => d.Id == id)?.DisplayName ?? id;
+
+    private void OpenCreate()
+    {
+        _editingId = null;
+        _model = NewChannel();
+        if (_drivers.Count > 0) _model.DriverId = _drivers[0].Id;
+        _selectedDescriptor = _drivers.FirstOrDefault(d => d.Id == _model.DriverId);
+        _testResult = null;
+        _showDialog = true;
+    }
+
+    private void OpenEdit(ChannelEntity c)
+    {
+        _editingId = c.Id;
+        _model = new ChannelEntity
+        {
+            Id = c.Id, Name = c.Name, DriverId = c.DriverId, Enabled = c.Enabled,
+            ConnectionJson = c.ConnectionJson, DefaultPollIntervalMs = c.DefaultPollIntervalMs,
+            TimeoutMs = c.TimeoutMs, RetryCount = c.RetryCount, Description = c.Description,
+        };
+        _selectedDescriptor = _drivers.FirstOrDefault(d => d.Id == c.DriverId);
+        _testResult = null;
+        _showDialog = true;
+    }
+
+    private void CloseDialog() => _showDialog = false;
+
+    private void OnDriverChanged(string? driverId)
+    {
+        _model.DriverId = driverId ?? "";
+        _selectedDescriptor = _drivers.FirstOrDefault(d => d.Id == _model.DriverId);
+        _testResult = null;
+    }
+
+    private string CurrentConnectionJson() =>
+        _schemaForm?.ResultJson ?? _model.ConnectionJson;
+
+    private async Task TestModelAsync()
+    {
+        if (string.IsNullOrEmpty(_model.DriverId)) return;
+        var json = CurrentConnectionJson();
+        _testResult = await Tester.TestAsync(_model.DriverId, json);
+    }
+
+    private async Task TestExistingAsync(ChannelEntity c) =>
+        _testResult = await Tester.TestAsync(c.DriverId, c.ConnectionJson);
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_model.Name) || string.IsNullOrEmpty(_model.DriverId)) return;
+        _model.ConnectionJson = CurrentConnectionJson();
+
+        if (_editingId is long id)
+        {
+            await Repo.UpdateChannelAsync(id, _model);
+            if (ChannelsManager.IsRunning(id)) await ChannelsManager.RestartChannelAsync(id); // 热重启生效
+        }
+        else
+        {
+            var created = await Repo.CreateChannelAsync(_model);
+            if (created.Enabled) await ChannelsManager.StartChannelAsync(created.Id);
+        }
+        _showDialog = false;
+        await ReloadAsync();
+    }
+
+    private async Task ToggleRunAsync(long id)
+    {
+        if (ChannelsManager.IsRunning(id)) await ChannelsManager.StopChannelAsync(id);
+        else await ChannelsManager.StartChannelAsync(id);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task DeleteAsync(ChannelEntity c)
+    {
+        await ChannelsManager.StopChannelAsync(c.Id);
+        await Repo.DeleteChannelAsync(c.Id);
+        await ReloadAsync();
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

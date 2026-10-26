@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Evolver Collect 北向出口：数据库（MySQL 批量 INSERT / InfluxDB 行协议）</Description>
+    <RootNamespace>EvolverCollect.Northbound.Database</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EvolverCollect.Core\EvolverCollect.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MySqlConnector" Version="2.4.*" />
+  </ItemGroup>
+
+</Project>

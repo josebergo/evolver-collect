@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Evolver Collect 自带模拟器：Modbus TCP/RTU-over-TCP 从站 + 虚拟数据发生器（无设备演示与集成测试对端）</Description>
+    <RootNamespace>EvolverCollect.Simulator</RootNamespace>
+    <AssemblyName>evolver-simulator</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EvolverCollect.Drivers.Modbus\EvolverCollect.Drivers.Modbus.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+data/
+*.db
+*.db-shm
+*.db-wal
+TestResults/
+node_modules/
+dist/
+*.pubxml.user
+# 设计文档不入库（内部规划文档，非开源交付物）
+docs/proposal*.md
+github-pulse/

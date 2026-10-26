@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Evolver Collect 外部插件 SDK（契约与清单）。进程内插件直接引用 Core 实现 IDriverFactory 即可；进程外插件按清单声明由宿主通过子进程协议接入（设计见 ADR-0005）</Description>
+    <RootNamespace>EvolverCollect.Plugins.Sdk</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EvolverCollect.Core\EvolverCollect.Core.csproj" />
+  </ItemGroup>
+
+</Project>

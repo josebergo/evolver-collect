@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Evolver Collect 南向驱动：Modbus TCP / RTU / RTU-over-TCP（自研帧层，含合并读优化与报文级错误翻译）</Description>
+    <RootNamespace>EvolverCollect.Drivers.Modbus</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EvolverCollect.Core\EvolverCollect.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvolverCollect.Drivers.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.*" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.*" />
+  </ItemGroup>
+
+</Project>

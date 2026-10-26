@@ -1,0 +1,220 @@
+@page "/north-apps"
+@rendermode InteractiveServer
+@inject ConfigRepository Repo
+@inject NorthAppManager North
+@implements IDisposable
+
+<h1>北向转发</h1>
+<p class="page-sub">把采集到的数据按过滤器转发到 MQTT / HTTP / Kafka / 数据库。断网自动缓存，恢复后按序回放。</p>
+
+<div class="toolbar">
+    <button class="btn btn-primary" @onclick="OpenCreate">＋ 新建北向</button>
+</div>
+
+<table class="table">
+    <thead><tr><th>#</th><th>名称</th><th>类型</th><th>状态</th><th>已发送</th><th>积压</th><th>回放</th><th>过滤</th><th style="width:240px">操作</th></tr></thead>
+    <tbody>
+        @foreach (var app in _apps)
+        {
+            var status = _statuses.FirstOrDefault(s => s.Id == app.Id);
+            <tr>
+                <td>@app.Id</td>
+                <td>@app.Name</td>
+                <td>@TypeName(app.Type)</td>
+                <td>
+                    <span class="badge @(status?.Connected == true ? "badge-ok" : status is null ? "badge-muted" : "badge-bad")">
+                        @(status?.Connected == true ? "在线" : status is null ? "未启动" : "离线")
+                    </span>
+                    @if (status?.LastError is string e)
+                    {
+                        <div class="cell-error small" title="@e">@e</div>
+                    }
+                </td>
+                <td>@(status?.SentPoints.ToString("N0") ?? "-")</td>
+                <td>@(status?.SpoolDepth.ToString("N0") ?? "-")</td>
+                <td>@(status?.ReplayedPoints.ToString("N0") ?? "-")</td>
+                <td class="cell-mono small" title="@(app.IncludeFilter ?? "全部")">@(app.IncludeFilter ?? "全部")</td>
+                <td>
+                    @if (status is null)
+                    {
+                        <button class="btn btn-sm" @onclick="() => North.StartAppAsync(app.Id)">启动</button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-sm" @onclick="() => North.RestartAppAsync(app.Id)">重启</button>
+                        <button class="btn btn-sm" @onclick="() => North.StopAppAsync(app.Id)">停止</button>
+                    }
+                    <button class="btn btn-sm" @onclick="() => OpenEdit(app)">编辑</button>
+                    <button class="btn btn-sm btn-danger" @onclick="() => DeleteAsync(app)">删除</button>
+                </td>
+            </tr>
+        }
+        @if (_apps.Count == 0)
+        {
+            <tr><td colspan="9" class="empty">还没有北向应用。常用：EMQX / Mosquitto / 自研平台 HTTP 接口。</td></tr>
+        }
+    </tbody>
+</table>
+
+@if (_showDialog)
+{
+    <div class="modal-mask" @onclick="() => _showDialog = false">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>@(_editingId is null ? "新建北向" : $"编辑北向 #{_editingId}")</h3>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label">名称 *</label>
+                    <input class="input" @bind="_model.Name" placeholder="如：车间数据→EMQX" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">类型</label>
+                    <select class="input" value="@_model.Type" @onchange="e => OnTypeChanged(e.Value?.ToString())">
+                        @foreach (var t in _types)
+                        {
+                            <option value="@t.Type">@t.DisplayName</option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            @if (_selectedDescriptor is not null)
+            {
+                <h4 class="section-title">连接参数</h4>
+                <JsonSchemaForm @ref="_schemaForm" SchemaJson="@_selectedDescriptor.ParameterSchemaJson"
+                                ExistingJson="@_model.ConnectionJson" />
+            }
+
+            <h4 class="section-title">数据筛选与批量</h4>
+            <div class="form-row">
+                <label class="form-label">包含（通配）</label>
+                <input class="input cell-mono" @bind="_model.IncludeFilter" placeholder="CNC-01.*;PLC-*（留空=全部）" />
+            </div>
+            <div class="form-row">
+                <label class="form-label">排除（通配）</label>
+                <input class="input cell-mono" @bind="_model.ExcludeFilter" placeholder="*.debug*" />
+            </div>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label">报文格式</label>
+                    <select class="input" @bind="_model.Format">
+                        <option value="json-lines">json-lines（逐行）</option>
+                        <option value="json-array">json-array（数组）</option>
+                        <option value="csv">csv</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label class="form-label">批量大小</label>
+                    <input type="number" class="input" @bind="_model.BatchSize" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">批量窗口 (ms)</label>
+                    <input type="number" class="input" @bind="_model.BatchIntervalMs" />
+                </div>
+            </div>
+            <label class="checkbox"><input type="checkbox" @bind="_model.Enabled" /> 启用</label>
+
+            <div class="modal-actions">
+                <button class="btn" @onclick="() => _showDialog = false">取消</button>
+                <button class="btn btn-primary" @onclick="SaveAsync">保存</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Inject] private IEnumerable<INorthboundFactory> NorthFactories { get; set; } = [];
+
+    private List<NorthAppEntity> _apps = [];
+    private IReadOnlyList<NorthAppStatus> _statuses = [];
+    private List<NorthboundDescriptor> _types = [];
+    private NorthboundDescriptor? _selectedDescriptor;
+    private JsonSchemaForm? _schemaForm;
+    private bool _showDialog;
+    private long? _editingId;
+    private NorthAppEntity _model = NewApp();
+    private Timer? _timer;
+
+    private static NorthAppEntity NewApp() => new()
+    {
+        Name = "", Type = "mqtt", Enabled = true, Format = "json-lines", BatchSize = 100, BatchIntervalMs = 500,
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _types = [.. NorthFactories.Select(f => f.Descriptor).OrderBy(d => d.DisplayName)];
+        if (_model.Type == "" && _types.Count > 0) _model.Type = _types[0].Type;
+        _selectedDescriptor = _types.FirstOrDefault(t => t.Type == _model.Type);
+        await ReloadAsync();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+            _timer = new Timer(async _ => { _statuses = North.GetStatusList(); await InvokeAsync(StateHasChanged); }, null, 1500, 1500);
+    }
+
+    private async Task ReloadAsync()
+    {
+        _apps = await Repo.GetNorthAppsAsync();
+        _statuses = North.GetStatusList();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string TypeName(string type) => _types.FirstOrDefault(t => t.Type == type)?.DisplayName ?? type;
+
+    private void OpenCreate()
+    {
+        _editingId = null;
+        _model = NewApp();
+        if (_types.Count > 0) _model.Type = _types[0].Type;
+        _selectedDescriptor = _types.FirstOrDefault(t => t.Type == _model.Type);
+        _showDialog = true;
+    }
+
+    private void OpenEdit(NorthAppEntity app)
+    {
+        _editingId = app.Id;
+        _model = new NorthAppEntity
+        {
+            Id = app.Id, Name = app.Name, Type = app.Type, Enabled = app.Enabled, ConnectionJson = app.ConnectionJson,
+            IncludeFilter = app.IncludeFilter, ExcludeFilter = app.ExcludeFilter, Format = app.Format,
+            BatchSize = app.BatchSize, BatchIntervalMs = app.BatchIntervalMs,
+        };
+        _selectedDescriptor = _types.FirstOrDefault(t => t.Type == app.Type);
+        _showDialog = true;
+    }
+
+    private void OnTypeChanged(string? type)
+    {
+        _model.Type = type ?? "mqtt";
+        _selectedDescriptor = _types.FirstOrDefault(t => t.Type == _model.Type);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_model.Name)) return;
+        if (_schemaForm is not null) _model.ConnectionJson = _schemaForm.ResultJson;
+
+        if (_editingId is long id)
+        {
+            await Repo.UpdateNorthAppAsync(id, _model);
+            if (North.GetStatusList().Any(s => s.Id == id)) await North.RestartAppAsync(id);
+        }
+        else
+        {
+            var created = await Repo.CreateNorthAppAsync(_model);
+            if (created.Enabled) await North.StartAppAsync(created.Id);
+        }
+        _showDialog = false;
+        await ReloadAsync();
+    }
+
+    private async Task DeleteAsync(NorthAppEntity app)
+    {
+        await North.StopAppAsync(app.Id);
+        await Repo.DeleteNorthAppAsync(app.Id);
+        await ReloadAsync();
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

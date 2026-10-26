@@ -1,0 +1,77 @@
+@page "/settings"
+@rendermode InteractiveServer
+@using System.Security.Claims
+@inject ConfigRepository Repo
+@inject AuthService Auth
+
+<h1>设置</h1>
+
+<div class="cards">
+    <div class="card">
+        <div class="card-title">修改密码</div>
+        @if (_passwordMessage is not null)
+        {
+            <div class="alert @(_passwordOk ? "alert-ok" : "alert-error")">@_passwordMessage</div>
+        }
+        <div class="form-row">
+            <label class="form-label">当前密码</label>
+            <input type="password" class="input" @bind="_oldPassword" />
+        </div>
+        <div class="form-row">
+            <label class="form-label">新密码（≥6 位）</label>
+            <input type="password" class="input" @bind="_newPassword" />
+        </div>
+        <button class="btn btn-primary" @onclick="ChangePasswordAsync">修改密码</button>
+    </div>
+
+    <div class="card">
+        <div class="card-title">运行参数</div>
+        @foreach (var kv in _settings)
+        {
+            <div class="kv"><span>@SettingLabel(kv.Key)</span><code>@kv.Value</code></div>
+        }
+        <p class="hint">监听地址在 data/evolver.db 的 Settings 表中修改后重启生效（默认仅本机 127.0.0.1，开放局域网需自行承担安全风险并改掉默认密码）。</p>
+    </div>
+
+    <div class="card">
+        <div class="card-title">配置备份</div>
+        <p class="hint">导出全部配置（通道/设备/点位/北向/模板）为 JSON，可用于迁移或版本管理。</p>
+        <a class="btn" href="/api/system/export" download="evolver-collect-config.json">导出配置</a>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Dictionary<string, string> _settings = [];
+    private string _oldPassword = "", _newPassword = "";
+    private string? _passwordMessage;
+    private bool _passwordOk;
+
+    protected override async Task OnInitializedAsync() => _settings = await Repo.GetSettingsAsync();
+
+    private async Task ChangePasswordAsync()
+    {
+        _passwordMessage = null;
+        if (AuthStateTask is null) return;
+        var auth = await AuthStateTask;
+        var userName = auth.User.Identity?.Name;
+        if (userName is null) { _passwordMessage = "未登录"; _passwordOk = false; return; }
+
+        var ok = await Auth.ChangePasswordAsync(userName, _oldPassword, _newPassword);
+        _passwordOk = ok;
+        _passwordMessage = ok ? "密码已修改" : "修改失败：当前密码错误或新密码少于 6 位";
+        if (ok) { _oldPassword = _newPassword = ""; }
+    }
+
+    private static string SettingLabel(string key) => key switch
+    {
+        "ListenHost" => "监听地址",
+        "ListenPort" => "监听端口",
+        "SpoolMaxRows" => "离线队列上限（行/北向）",
+        "AlarmRetentionDays" => "报警保留天数",
+        "Language" => "语言",
+        _ => key,
+    };
+}

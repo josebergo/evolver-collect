@@ -1,0 +1,13 @@
+{
+  "vendor": "Evolver",
+  "model": "SIM-METER-100（配套模拟器演示模板）",
+  "description": "对 simulator 的演示点位：主轴负载/温度/运行/产量",
+  "tags": [
+    { "name": "主轴负载", "address": "40001", "dataType": "Float", "description": "0~85 正弦波动" },
+    { "name": "温度", "address": "40003", "dataType": "UInt16", "scaleA": 0.1, "description": "原始值×0.1=摄氏度" },
+    { "name": "运行状态", "address": "00001", "dataType": "Bool", "description": "模拟偶发停机" },
+    { "name": "心跳", "address": "00002", "dataType": "Bool", "deadband": 0, "description": "常 1" },
+    { "name": "累计产量", "address": "30001", "dataType": "UInt32", "pollIntervalMs": 5000, "description": "输入寄存器 UInt32" },
+    { "name": "漂移量1", "address": "40005", "dataType": "Int16" }
+  ]
+}

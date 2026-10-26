@@ -1,0 +1,137 @@
+@page "/"
+@rendermode InteractiveServer
+@inject ChannelManager Channels
+@inject NorthAppManager North
+@inject RealtimeCache Cache
+@inject DataHub Hub
+@implements IDisposable
+
+<h1>总览</h1>
+
+<div class="cards">
+    <div class="card">
+        <div class="card-title">采集通道</div>
+        <div class="card-value">@($"{_running}/{_channelCount}")</div>
+        <div class="card-sub">@(_degraded > 0 ? $"{_degraded} 个通道离线" : "全部在线")</div>
+    </div>
+    <div class="card">
+        <div class="card-title">实时点位</div>
+        <div class="card-value">@Cache.Count</div>
+        <div class="card-sub">已发布 @Hub.PublishedPoints 个数据点</div>
+    </div>
+    <div class="card">
+        <div class="card-title">北向转发</div>
+        <div class="card-value">@($"{_northOnline}/{_northTotal}")</div>
+        <div class="card-sub">离线队列 @($"{_spoolDepth:N0}") 条</div>
+    </div>
+    <div class="card">
+        <div class="card-title">管道丢弃</div>
+        <div class="card-value">@(Hub.DroppedPoints > 0 ? Hub.DroppedPoints.ToString("N0") : "0")</div>
+        <div class="card-sub">@($"{Hub.PublishedPoints:N0}")</div>
+    </div>
+</div>
+
+<h2>通道状态</h2>
+<table class="table">
+    <thead>
+        <tr>
+            <th>通道</th><th>驱动</th><th>状态</th><th>成功率</th><th>读取次数</th><th>点位</th><th>延迟</th><th>最近错误</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var s in _channelStatus)
+        {
+            <tr>
+                <td>@s.Name</td>
+                <td>@s.DriverId</td>
+                <td><span class="badge @BadgeClass(s.State)">@StateText(s.State)</span></td>
+                <td>@(s.SuccessRate.ToString("P1"))</td>
+                <td>@(s.TotalReads.ToString("N0"))</td>
+                <td>@s.TagCount</td>
+                <td>@((int)s.LastLatency.TotalMilliseconds) ms</td>
+                <td class="cell-error" title="@s.LastError">@(s.LastError ?? "-")</td>
+            </tr>
+        }
+        @if (_channelStatus.Count == 0)
+        {
+            <tr><td colspan="8" class="empty">暂无通道。先启动模拟器，再到「采集通道」新建一个 Modbus 通道（127.0.0.1:1502）。</td></tr>
+        }
+    </tbody>
+</table>
+
+<h2>实时值（最近 30 个）</h2>
+<table class="table">
+    <thead><tr><th>设备</th><th>点位</th><th>值</th><th>质量</th><th>时间</th></tr></thead>
+    <tbody>
+        @foreach (var p in _latest)
+        {
+            <tr>
+                <td>@p.DeviceName</td>
+                <td>@p.TagName</td>
+                <td class="cell-value">@FormatValue(p.Value)</td>
+                <td><span class="badge @(p.Quality == Quality.Good ? "badge-ok" : "badge-bad")">@p.Quality</span></td>
+                <td class="cell-time">@DateTimeOffset.FromUnixTimeMilliseconds(p.TimestampMs).LocalDateTime.ToString("HH:mm:ss.fff")</td>
+            </tr>
+        }
+        @if (_latest.Count == 0)
+        {
+            <tr><td colspan="5" class="empty">暂无数据</td></tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    private List<ChannelStatus> _channelStatus = [];
+    private IReadOnlyList<DataPoint> _latest = [];
+    private Timer? _timer;
+    private int _channelCount, _running, _degraded, _northTotal, _northOnline;
+    private long _spoolDepth;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender) return;
+        _timer = new Timer(async _ => await InvokeAsync(Refresh), null, 0, 1500);
+    }
+
+    private void Refresh()
+    {
+        _channelStatus = Channels.GetStatusList().OrderBy(s => s.ChannelId).ToList();
+        _running = _channelStatus.Count(s => s.Connected);
+        _degraded = _channelStatus.Count(s => s.State is ChannelState.Degraded or ChannelState.Stopped && s.TagCount > 0);
+        _channelCount = _channelStatus.Count;
+
+        var north = North.GetStatusList();
+        _northTotal = north.Count;
+        _northOnline = north.Count(n => n.Connected);
+        _spoolDepth = north.Sum(n => n.SpoolDepth);
+
+        _latest = Cache.Snapshot().TakeLast(30).Reverse().ToList();
+        StateHasChanged();
+    }
+
+    private static string StateText(ChannelState s) => s switch
+    {
+        ChannelState.Running => "运行中",
+        ChannelState.Degraded => "重连中",
+        ChannelState.Starting => "启动中",
+        ChannelState.Stopping => "停止中",
+        _ => "已停止",
+    };
+
+    private static string BadgeClass(ChannelState s) => s switch
+    {
+        ChannelState.Running => "badge-ok",
+        ChannelState.Degraded => "badge-bad",
+        _ => "badge-muted",
+    };
+
+    private static string FormatValue(object? v) => v switch
+    {
+        double d => d.ToString("0.###"),
+        float f => f.ToString("0.###"),
+        null => "-",
+        _ => v.ToString() ?? "-",
+    };
+
+    public void Dispose() => _timer?.Dispose();
+}

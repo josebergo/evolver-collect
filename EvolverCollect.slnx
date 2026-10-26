@@ -1,0 +1,26 @@
+<Solution>
+  <Folder Name="/simulator/">
+    <Project Path="simulator/EvolverCollect.Simulator/EvolverCollect.Simulator.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/EvolverCollect.Adapter.Focas/EvolverCollect.Adapter.Focas.csproj" />
+    <Project Path="src/EvolverCollect.Core/EvolverCollect.Core.csproj" />
+    <Project Path="src/EvolverCollect.Drivers.Fins/EvolverCollect.Drivers.Fins.csproj" />
+    <Project Path="src/EvolverCollect.Drivers.Focas/EvolverCollect.Drivers.Focas.csproj" />
+    <Project Path="src/EvolverCollect.Drivers.Mc/EvolverCollect.Drivers.Mc.csproj" />
+    <Project Path="src/EvolverCollect.Drivers.Modbus/EvolverCollect.Drivers.Modbus.csproj" />
+    <Project Path="src/EvolverCollect.Drivers.OpcUa/EvolverCollect.Drivers.OpcUa.csproj" />
+    <Project Path="src/EvolverCollect.Drivers.S7/EvolverCollect.Drivers.S7.csproj" />
+    <Project Path="src/EvolverCollect.Northbound.Database/EvolverCollect.Northbound.Database.csproj" />
+    <Project Path="src/EvolverCollect.Northbound.Http/EvolverCollect.Northbound.Http.csproj" />
+    <Project Path="src/EvolverCollect.Northbound.Kafka/EvolverCollect.Northbound.Kafka.csproj" />
+    <Project Path="src/EvolverCollect.Northbound.Mqtt/EvolverCollect.Northbound.Mqtt.csproj" />
+    <Project Path="src/EvolverCollect.Plugins.Sdk/EvolverCollect.Plugins.Sdk.csproj" />
+    <Project Path="src/EvolverCollect.Server/EvolverCollect.Server.csproj" />
+    <Project Path="src/EvolverCollect.Storage/EvolverCollect.Storage.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EvolverCollect.Core.Tests/EvolverCollect.Core.Tests.csproj" />
+    <Project Path="tests/EvolverCollect.Drivers.Tests/EvolverCollect.Drivers.Tests.csproj" />
+  </Folder>
+</Solution>

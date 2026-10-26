@@ -1,0 +1,13 @@
+{
+  "vendor": "SIEMENS",
+  "model": "S7-1200 通用机床数据（示例骨架，按实际 DB 修改地址）",
+  "description": "示例：假设 DB20 为机床数据块（非优化访问）。地址请以 PLC 程序实际偏移为准。",
+  "tags": [
+    { "name": "程序号", "address": "DB20.DBW0", "dataType": "UInt16" },
+    { "name": "主轴负载", "address": "DB20.DBD2", "dataType": "Float" },
+    { "name": "进给倍率", "address": "DB20.DBW6", "dataType": "UInt16", "scaleA": 0.1 },
+    { "name": "运行中", "address": "DB20.DBX8.0", "dataType": "Bool" },
+    { "name": "报警", "address": "DB20.DBX8.1", "dataType": "Bool" },
+    { "name": "加工件数", "address": "DB20.DBD10", "dataType": "UInt32", "pollIntervalMs": 5000 }
+  ]
+}

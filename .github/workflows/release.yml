@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test
+        run: dotnet test -c Release
+
+      - name: Publish win-x64 (green single exe)
+        run: >
+          dotnet publish src/EvolverCollect.Server -c Release -r win-x64
+          --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
+          -o publish/win-x64
+
+      - name: Publish linux-x64
+        run: >
+          dotnet publish src/EvolverCollect.Server -c Release -r linux-x64
+          --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
+          -o publish/linux-x64
+
+      - name: Package
+        shell: bash
+        run: |
+          7z a evolver-collect-win-x64.zip ./publish/win-x64/*
+          7z a evolver-collect-linux-x64.tar.gz ./publish/linux-x64/*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            evolver-collect-win-x64.zip
+            evolver-collect-linux-x64.tar.gz
+          body: 见 CHANGELOG.md

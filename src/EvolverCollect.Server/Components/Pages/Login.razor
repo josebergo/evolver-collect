@@ -1,0 +1,32 @@
+@page "/login"
+@layout Layout.AuthLayout
+
+<h2>Evolver Collect</h2>
+<p class="auth-sub">设备数据采集网关 · 请登录</p>
+
+<form method="post" action="/login-submit" class="auth-form">
+    <div class="form-row">
+        <label class="form-label" for="u">用户名</label>
+        <input id="u" name="userName" class="input" autocomplete="username" required />
+    </div>
+    <div class="form-row">
+        <label class="form-label" for="p">密码</label>
+        <input id="p" name="password" type="password" class="input" autocomplete="current-password" required />
+    </div>
+
+    @if (_loginFailed)
+    {
+        <div class="alert alert-error">用户名或密码错误</div>
+    }
+
+    <button type="submit" class="btn btn-primary btn-block">登 录</button>
+</form>
+
+<p class="auth-tip">首次使用默认账号 <code>admin / admin</code>，登录后请立即在「设置」中修改密码。</p>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    private bool? Error { get; set; }
+
+    private bool _loginFailed => Error == true;
+}

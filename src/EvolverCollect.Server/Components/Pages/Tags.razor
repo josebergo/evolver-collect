@@ -1,0 +1,335 @@
+@page "/tags"
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.AspNetCore.WebUtilities
+@inject ConfigRepository Repo
+@inject ChannelManager Channels
+@inject RealtimeCache Cache
+@implements IDisposable
+
+<h1>点位与实时值</h1>
+@if (_toast is not null)
+{
+    <div class="alert alert-ok">@_toast</div>
+}
+<p class="page-sub">点位 = 要采集的一个数据项。地址语法见各驱动帮助（如 Modbus：40001 保持寄存器 / 00001 线圈）。</p>
+
+<div class="toolbar">
+    <select class="input select-inline" value="@_deviceId" @onchange="e => OnDeviceChanged(e.Value?.ToString())">
+        <option value="">— 选择设备 —</option>
+        @foreach (var d in _deviceOptions)
+        {
+            <option value="@d.Id">@d.Label</option>
+        }
+    </select>
+    <button class="btn btn-primary" disabled="@(_deviceId is null)" @onclick="OpenCreate">＋ 新建点位</button>
+    <button class="btn" disabled="@(_deviceId is null)" @onclick="() => _showBatch = true">批量粘贴</button>
+</div>
+
+@if (_deviceId is long deviceId)
+{
+    <table class="table">
+        <thead>
+            <tr><th>名称</th><th>地址</th><th>类型</th><th>周期</th><th>换算</th><th>实时值</th><th>质量</th><th style="width:220px">操作</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var t in _tags)
+            {
+                var live = Cache.Get(t.Id);
+                <tr>
+                    <td>@t.Name</td>
+                    <td class="cell-mono">@t.Address</td>
+                    <td>@t.DataType@(t.BitIndex is int bit ? $".{bit}" : "")</td>
+                    <td>@(t.PollIntervalMs?.ToString() ?? "默认")</td>
+                    <td>@(t.ScaleA != 1 || t.ScaleB != 0 ? $"{t.ScaleA}·x+{t.ScaleB}" : "-")</td>
+                    <td class="cell-value">@(live is null ? "-" : FormatValue(live.Value))</td>
+                    <td>
+                        @if (live is not null)
+                        {
+                            <span class="badge @(live.Quality == Quality.Good ? "badge-ok" : "badge-bad")">@live.Quality</span>
+                        }
+                    </td>
+                    <td>
+                        @if (t.Writable)
+                        {
+                            <button class="btn btn-sm" @onclick="() => OpenWrite(t)">写入</button>
+                        }
+                        <button class="btn btn-sm" @onclick="() => OpenEdit(t)">编辑</button>
+                        <button class="btn btn-sm btn-danger" @onclick="() => DeleteAsync(t)">删除</button>
+                    </td>
+                </tr>
+            }
+            @if (_tags.Count == 0)
+            {
+                <tr><td colspan="8" class="empty">该设备还没有点位。可用「批量粘贴」快速建点（格式：名称,地址,类型）。</td></tr>
+            }
+        </tbody>
+    </table>
+}
+
+@if (_showDialog)
+{
+    <div class="modal-mask" @onclick="() => _showDialog = false">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>@(_editingId is null ? "新建点位" : $"编辑点位 #{_editingId}")</h3>
+            <div class="form-grid">
+                <div class="form-row">
+                    <label class="form-label">名称 *</label>
+                    <input class="input" @bind="_model.Name" placeholder="如 主轴负载" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">地址 *</label>
+                    <input class="input cell-mono" @bind="_model.Address" placeholder="40001 / DB1.DBX0.0" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">数据类型</label>
+                    <select class="input" @bind="_model.DataType">
+                        @foreach (var t in Enum.GetNames<TagDataType>())
+                        {
+                            <option value="@t">@t</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label class="form-label">采集周期覆盖 (ms)</label>
+                    <input type="number" class="input" @bind="_pollOverride" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">换算系数 a（×a）</label>
+                    <input type="number" step="any" class="input" @bind="_model.ScaleA" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">换算偏移 b（+b）</label>
+                    <input type="number" step="any" class="input" @bind="_model.ScaleB" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">死区</label>
+                    <input type="number" step="any" class="input" @bind="_deadband" />
+                </div>
+                <div class="form-row">
+                    <label class="form-label">位序号（拆位）</label>
+                    <input type="number" class="input" @bind="_bitIndex" />
+                </div>
+            </div>
+            <label class="checkbox"><input type="checkbox" @bind="_model.Writable" /> 允许写入</label>
+            <div class="modal-actions">
+                <button class="btn" @onclick="() => _showDialog = false">取消</button>
+                <button class="btn btn-primary" @onclick="SaveAsync">保存</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showBatch)
+{
+    <div class="modal-mask" @onclick="() => _showBatch = false">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>批量粘贴点位</h3>
+            <p class="page-sub">每行一个点位：<code>名称,地址,类型[,周期ms]</code>，类型可省略（默认 UInt16）。例：<br />
+                <code>电压,40001,Float</code><br /><code>运行,00001,Bool</code><code>,1000</code></p>
+            <textarea class="input textarea" rows="10" @bind="_batchText"></textarea>
+            <div class="modal-actions">
+                <button class="btn" @onclick="() => _showBatch = false">取消</button>
+                <button class="btn btn-primary" @onclick="ImportBatchAsync">导入</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_writeTag is not null)
+{
+    <div class="modal-mask" @onclick="() => _writeTag = null">
+        <div class="modal" @onclick:stopPropagation="true">
+            <h3>写入 @_writeTag.Name（@_writeTag.Address）</h3>
+            <div class="form-row">
+                <label class="form-label">值（@_writeTag.DataType）</label>
+                <input class="input" @bind="_writeValue" />
+            </div>
+            @if (_writeResult is { } wr)
+            {
+                <div class="alert @(wr.Success ? "alert-ok" : "alert-error")">
+                    @(wr.Success ? "写入成功" : $"写入失败：{wr.Error}")
+                </div>
+            }
+            <div class="modal-actions">
+                <button class="btn" @onclick="() => _writeTag = null">关闭</button>
+                <button class="btn btn-primary" @onclick="WriteAsync">写入</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private sealed record DeviceOption(long Id, string Label);
+
+    private List<DeviceOption> _deviceOptions = [];
+    private List<TagEntity> _tags = [];
+    private long? _deviceId;
+    private Dictionary<long, (long ChannelId, string Name, int? Station)> _deviceInfo = [];
+    private bool _showDialog, _showBatch;
+    private long? _editingId;
+    private TagEntity _model = NewTag();
+    private int? _pollOverride, _bitIndex;
+    private double? _deadband;
+    private string _batchText = "";
+    private TagEntity? _writeTag;
+    private string _writeValue = "";
+    private WriteResult? _writeResult;
+    private string? _toast;
+    private Timer? _timer;
+
+    private static TagEntity NewTag() => new()
+    {
+        Name = "", Address = "", DataType = "UInt16", Writable = false,
+        ScaleA = 1.0, ScaleB = 0.0,
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var devices = await Repo.GetDevicesAsync();
+        var channels = await Repo.GetChannelsAsync();
+        var channelNames = channels.ToDictionary(c => c.Id, c => c.Name);
+        _deviceOptions = [.. devices.Select(d => new DeviceOption(d.Id, $"{channelNames.GetValueOrDefault(d.ChannelId, "?")} / {d.Name}"))];
+        _deviceInfo = devices.ToDictionary(d => d.Id, d => (d.ChannelId, d.Name, d.StationNo));
+
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        if (QueryHelpers.ParseQuery(uri.Query).TryGetValue("deviceId", out var did) && long.TryParse(did, out var parsed))
+            await SelectDeviceAsync(parsed);
+    }
+
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, 1000, 1000);
+    }
+
+    private void OnDeviceChanged(string? value)
+    {
+        if (long.TryParse(value, out var id)) _ = SelectDeviceAsync(id);
+        else { _deviceId = null; _tags = []; }
+    }
+
+    private async Task SelectDeviceAsync(long id)
+    {
+        _deviceId = id;
+        _tags = await Repo.GetTagsAsync(id);
+        StateHasChanged();
+    }
+
+    private void OpenCreate()
+    {
+        _editingId = null;
+        _model = NewTag();
+        _pollOverride = _bitIndex = null;
+        _deadband = null;
+        _showDialog = true;
+    }
+
+    private void OpenEdit(TagEntity t)
+    {
+        _editingId = t.Id;
+        _model = new TagEntity
+        {
+            Id = t.Id, DeviceId = t.DeviceId, Name = t.Name, Address = t.Address, DataType = t.DataType,
+            Writable = t.Writable, PollIntervalMs = t.PollIntervalMs, ScaleA = t.ScaleA, ScaleB = t.ScaleB,
+            Deadband = t.Deadband, BitIndex = t.BitIndex, Description = t.Description, SortOrder = t.SortOrder,
+        };
+        _pollOverride = t.PollIntervalMs;
+        _bitIndex = t.BitIndex;
+        _deadband = t.Deadband;
+        _showDialog = true;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_deviceId is not long deviceId || string.IsNullOrWhiteSpace(_model.Name) || string.IsNullOrWhiteSpace(_model.Address)) return;
+        _model.DeviceId = deviceId;
+        _model.PollIntervalMs = _pollOverride;
+        _model.BitIndex = _bitIndex;
+        _model.Deadband = _deadband;
+        if (_editingId is long id) await Repo.UpdateTagAsync(id, _model);
+        else await Repo.CreateTagAsync(_model);
+        _showDialog = false;
+        await SelectDeviceAsync(deviceId);
+        await RestartChannelIfRunningAsync(deviceId);
+    }
+
+    private async Task DeleteAsync(TagEntity t)
+    {
+        await Repo.DeleteTagAsync(t.Id);
+        if (_deviceId is long deviceId) await SelectDeviceAsync(deviceId);
+        await RestartChannelIfRunningAsync(t.DeviceId);
+    }
+
+    private async Task RestartChannelIfRunningAsync(long deviceId)
+    {
+        if (_deviceInfo.TryGetValue(deviceId, out var info) && Channels.IsRunning(info.ChannelId))
+            await Channels.RestartChannelAsync(info.ChannelId);
+    }
+
+    private async Task ImportBatchAsync()
+    {
+        if (_deviceId is not long deviceId) return;
+        var entities = new List<TagEntity>();
+        foreach (var rawLine in _batchText.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim().TrimEnd('\r');
+            if (line.Length == 0 || line.StartsWith('#')) continue;
+            var parts = line.Split(',');
+            if (parts.Length < 2) continue;
+            entities.Add(new TagEntity
+            {
+                DeviceId = deviceId,
+                Name = parts[0].Trim(),
+                Address = parts[1].Trim(),
+                DataType = parts.Length > 2 && !string.IsNullOrWhiteSpace(parts[2]) ? parts[2].Trim() : "UInt16",
+                PollIntervalMs = parts.Length > 3 && int.TryParse(parts[3], out var p) ? p : null,
+                SortOrder = entities.Count,
+            });
+        }
+        var created = await Repo.BatchCreateTagsAsync(entities);
+        _showBatch = false;
+        _batchText = "";
+        _toast = $"批量创建 {created} 个点位";
+        await SelectDeviceAsync(deviceId);
+        await RestartChannelIfRunningAsync(deviceId);
+    }
+
+    private void OpenWrite(TagEntity t)
+    {
+        _writeTag = t;
+        _writeValue = "";
+        _writeResult = null;
+    }
+
+    private async Task WriteAsync()
+    {
+        if (_writeTag is null || !_deviceInfo.TryGetValue(_writeTag.DeviceId, out var info)) return;
+        var value = ConvertWriteValue(_writeValue, _writeTag.DataType);
+        var definition = ConfigRepository.ToTagDefinition(_writeTag);
+        _writeResult = await Channels.WriteTagAsync(info.ChannelId, definition, value, info.Name, info.Station, default);
+    }
+
+    private static object ConvertWriteValue(string raw, string dataType)
+    {
+        var type = dataType switch
+        {
+            "Bool" => typeof(bool), "Int16" => typeof(short), "UInt16" => typeof(ushort),
+            "Int32" => typeof(int), "UInt32" => typeof(uint), "Int64" => typeof(long), "UInt64" => typeof(ulong),
+            "Float" => typeof(float), "Double" => typeof(double), _ => typeof(string),
+        };
+        if (type == typeof(bool)) return raw.Trim() is "1" or "true" or "True" or "是";
+        return Convert.ChangeType(raw.Trim(), type, CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatValue(object? v) => v switch
+    {
+        double d => d.ToString("0.###"),
+        float f => f.ToString("0.###"),
+        null => "-",
+        _ => v.ToString() ?? "-",
+    };
+
+    public void Dispose() => _timer?.Dispose();
+}

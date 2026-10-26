@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x86</PlatformTarget>
+    <Description>FANUC FOCAS 适配器（独立 x86 进程）：主程序经标准输入输出 JSON 行协议与之通信；无 fwlib32.dll 时自动进入 mock 模式用于演示/联调</Description>
+    <RootNamespace>EvolverCollect.Adapter.Focas</RootNamespace>
+    <AssemblyName>evolver-focas-adapter</AssemblyName>
+  </PropertyGroup>
+
+</Project>

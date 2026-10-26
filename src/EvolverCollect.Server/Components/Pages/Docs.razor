@@ -1,0 +1,89 @@
+@page "/docs"
+@rendermode InteractiveServer
+@inject DocsService DocsSvc
+@inject NavigationManager Nav
+
+<h1>文档中心</h1>
+<p class="page-sub">协议教程、排障手册与开发指南，随程序内置、完全离线可查。</p>
+
+<div class="docs-layout">
+    <aside class="docs-toc">
+        <input class="input" placeholder="搜索文档…" value="@_search" @oninput="e => OnSearch(e.Value?.ToString())" />
+        @if (_searchResults is not null)
+        {
+            <div class="doc-section">搜索结果</div>
+            @foreach (var r in _searchResults)
+            {
+                <a class="toc-link" @onclick="() => OpenDoc(r.Slug)">@r.Title</a>
+            }
+        }
+        else
+        {
+            var lastSection = "";
+            foreach (var item in _toc)
+            {
+                if (item.Section != lastSection)
+                {
+                    lastSection = item.Section;
+                    <div class="doc-section">@(SectionTitle(item.Section))</div>
+                }
+                <a class="toc-link @(item.Slug == _current ? "active" : "")" @onclick="() => OpenDoc(item.Slug)">@item.Title</a>
+            }
+        }
+    </aside>
+    <article class="docs-content">
+        @if (_html is null)
+        {
+            <p class="empty">选择左侧文档开始阅读。</p>
+        }
+        else
+        {
+            <div class="md-content">@((MarkupString)_html)</div>
+        }
+    </article>
+</div>
+
+@code {
+    private IReadOnlyList<DocsService.DocMeta> _toc = [];
+    private IReadOnlyList<DocsService.DocMeta>? _searchResults;
+    private string _search = "";
+    private string? _current;
+    private string? _html;
+
+    protected override void OnInitialized()
+    {
+        _toc = DocsSvc.GetToc();
+        var uri = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var slug = query["slug"];
+        OpenDoc(string.IsNullOrEmpty(slug) ? _toc.FirstOrDefault()?.Slug : slug!);
+    }
+
+    private void OnSearch(string? value)
+    {
+        _search = value ?? "";
+        _searchResults = string.IsNullOrWhiteSpace(_search) ? null : DocsSvc.Search(_search);
+    }
+
+    private void OpenDoc(string slug)
+    {
+        var entry = DocsSvc.Get(slug);
+        if (entry is null) return;
+        _current = slug;
+        _html = entry.Html;
+    }
+
+    private static string SectionTitle(string section) => section switch
+    {
+        "getting-started" => "新手入门",
+        "protocol-tutorials/modbus" => "Modbus 从零",
+        "protocol-tutorials/opcua" => "OPC UA",
+        "protocol-tutorials/s7" => "西门子 S7",
+        "protocol-tutorials/mc" => "三菱 MC",
+        "protocol-tutorials/fins" => "欧姆龙 FINS",
+        "troubleshooting" => "排障手册",
+        "developer" => "开发者",
+        "northbound" => "转发与集成",
+        _ => section,
+    };
+}
