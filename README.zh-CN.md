@@ -7,7 +7,7 @@
 
 <div align="center">
 
-**.NET 10** · **Blazor** · **SQLite** · **Apache-2.0**
+**作者：码禾数字** · .NET 10 · Blazor · SQLite · Apache-2.0
 
 [快速开始](#快速开始) · [功能](#功能) · [架构](#架构) · [文档中心](docs/) · [参与贡献](CONTRIBUTING.md)
 
@@ -90,4 +90,4 @@ v1.0 已交付全部核心能力（详见 [CHANGELOG](CHANGELOG.md)）。后续�
 
 ## License
 
-[Apache-2.0](LICENSE) · FANUC FOCAS 等闭源 SDK 由使用者自行向厂商获取，本项目不随包分发。
+[Apache-2.0](LICENSE) © 2026 [码禾数字](https://github.com/josebergo/evolver-collect) · FANUC FOCAS 等闭源 SDK 由使用者自行向厂商获取，本项目不随包分发。

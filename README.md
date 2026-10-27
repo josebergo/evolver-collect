@@ -7,7 +7,7 @@
 
 <div align="center">
 
-**.NET 10** · **Blazor** · **SQLite** · **Apache-2.0**
+**Author: 码禾数字 (Mahe Digital)** · .NET 10 · Blazor · SQLite · Apache-2.0
 
 [Quick Start](#quick-start) · [Features](#features) · [Architecture](#architecture) · [Docs](docs/) · [Contributing](CONTRIBUTING.md)
 
@@ -91,4 +91,4 @@ v1.0 delivers the full core capability set (see [CHANGELOG](CHANGELOG.md)). Up n
 
 ## License
 
-[Apache-2.0](LICENSE) · Proprietary SDKs such as FANUC FOCAS (fwlib32.dll) must be obtained from the vendor by the user; this project does not redistribute them.
+[Apache-2.0](LICENSE) © 2026 [码禾数字 / Mahe Digital](https://github.com/josebergo/evolver-collect) · Proprietary SDKs such as FANUC FOCAS (fwlib32.dll) must be obtained from the vendor by the user; this project does not redistribute them.
